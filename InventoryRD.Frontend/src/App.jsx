@@ -7,7 +7,8 @@ const pages = {
   products: "Productos",
   categories: "Categorías",
   suppliers: "Proveedores",
-  movements: "Movimientos de inventario"
+  movements: "Movimientos de inventario",
+  reports: "Reportes"
 };
 
 const names = { products: "producto", categories: "categoría", suppliers: "proveedor" };
@@ -193,16 +194,31 @@ function CatalogFilters({ view, filters, setFilters, categories, suppliers }) {
   );
 }
 
-function Home({ products, categories, suppliers }) {
+function Home({ products, categories, suppliers, lowStock, movements }) {
   return (
-    <div className="stats-grid">
-      <StatCard label="Productos" value={products.length} />
-      <StatCard label="Categorías" value={categories.length} />
-      <StatCard label="Proveedores" value={suppliers.length} />
-      <StatCard label="Unidades disponibles" value={products.reduce((total, product) => total + product.stock, 0)} />
-      <StatCard label="Productos activos" value={products.filter(product => product.isActive).length} />
-      <StatCard label="Valor del inventario" value={money(products.reduce((total, product) => total + product.stock * product.price, 0))} />
-    </div>
+    <>
+      <div className="stats-grid">
+        <StatCard label="Productos" value={products.length} />
+        <StatCard label="Categorías" value={categories.length} />
+        <StatCard label="Proveedores" value={suppliers.length} />
+        <StatCard label="Unidades disponibles" value={products.reduce((total, product) => total + product.stock, 0)} />
+        <StatCard label="Productos activos" value={products.filter(product => product.isActive).length} />
+        <StatCard label="Productos con pocas existencias" value={lowStock.length} />
+        <StatCard label="Valor del inventario" value={money(products.reduce((total, product) => total + product.stock * product.price, 0))} />
+      </div>
+      <div className="dashboard-details">
+        <section className="panel">
+          <h2>Existencias bajas</h2>
+          <DataTable columns={["Producto", "Unidades"]}>
+            {lowStock.map(product => <tr key={product.id}><th scope="row">{product.name}</th><td>{product.stock}</td></tr>)}
+          </DataTable>
+        </section>
+        <section className="panel">
+          <h2>Movimientos recientes</h2>
+          <MovementHistory items={movements.slice(0, 5)} />
+        </section>
+      </div>
+    </>
   );
 }
 
@@ -309,12 +325,109 @@ function Movements({ products, items, busy, onSave }) {
   );
 }
 
+const reports = {
+  products: {
+    label: "Productos",
+    columns: [["Nombre", row => row.name], ["Categoría", row => row.categoryName], ["Proveedor", row => row.supplierName],
+      ["Precio", row => row.price], ["Existencias", row => row.stock], ["Estado", row => row.isActive ? "Activo" : "Inactivo"]]
+  },
+  stock: {
+    label: "Existencias",
+    columns: [["Producto", row => row.name], ["Existencias", row => row.stock],
+      ["Nivel bajo", row => row.isActive && row.stock <= 5 ? "Sí" : "—"]]
+  },
+  categories: {
+    label: "Categorías",
+    columns: [["Nombre", row => row.name], ["Descripción", row => row.description], ["Estado", row => row.isActive ? "Activa" : "Inactiva"]]
+  },
+  suppliers: {
+    label: "Proveedores",
+    columns: [["Nombre", row => row.name], ["Correo electrónico", row => row.email],
+      ["Teléfono", row => row.phoneNumber], ["Estado", row => row.isActive ? "Activo" : "Inactivo"]]
+  },
+  movements: {
+    label: "Movimientos",
+    columns: [["Fecha", row => dateTimeLabel(row.createdAt)], ["Producto", row => row.productName],
+      ["Tipo", row => movementTypeLabel(row.movementType)], ["Cantidad", row => row.quantity], ["Descripción", row => row.description]]
+  }
+};
+
+function Reports() {
+  const [type, setType] = useState("products");
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let current = true;
+    const loadReport = async () => {
+      try {
+        const data = await api(`/reports/${type}`);
+        if (current) setItems(data);
+      } catch (exception) {
+        if (current) setError(exception.message);
+      } finally {
+        if (current) setLoading(false);
+      }
+    };
+    loadReport();
+    return () => { current = false; };
+  }, [type]);
+
+  const changeReport = event => {
+    setItems([]);
+    setError("");
+    setLoading(true);
+    setType(event.target.value);
+  };
+
+  const columns = reports[type].columns;
+  const headers = columns.map(([label]) => label);
+  const rows = items.map(item => ({ id: item.id, values: columns.map(([, read]) => read(item)) }));
+
+  const downloadReport = () => {
+    const quote = value => {
+      const text = String(value ?? "");
+      const safeText = typeof value === "string" && (/^[=+@-]/.test(text.trimStart()) || /^[\t\r]/.test(text)) ? "'" + text : text;
+      return '"' + safeText.replaceAll('"', '""') + '"';
+    };
+    const csv = [headers, ...rows.map(row => row.values)].map(row => row.map(quote).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `inventoryrd-${type}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  return (
+    <section className="panel">
+      <div className="report-controls">
+        <label>Tipo de reporte
+          <select aria-label="Tipo de reporte" value={type} onChange={changeReport}>
+            {Object.entries(reports).map(([key, report]) => <option key={key} value={key}>{report.label}</option>)}
+          </select>
+        </label>
+        <button className="btn primary" type="button" onClick={downloadReport} disabled={loading || rows.length === 0}>Exportar CSV</button>
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+      {loading ? <p className="loading" role="status">Cargando reporte…</p> : (
+        <DataTable columns={headers}>
+          {rows.map(row => <tr key={row.id}>{row.values.map((value, index) => <td key={headers[index]}>{value ?? ""}</td>)}</tr>)}
+        </DataTable>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState("home");
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [movements, setMovements] = useState([]);
+  const [lowStock, setLowStock] = useState([]);
   const [filters, setFilters] = useState(emptyFilters);
   const [form, setForm] = useState(null);
   const [confirm, setConfirm] = useState(null);
@@ -326,13 +439,14 @@ export default function App() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [productData, categoryData, supplierData, movementData] = await Promise.all([
-        api("/products"), api("/categories"), api("/suppliers"), api("/stockmovements")
+      const [productData, categoryData, supplierData, movementData, lowStockData] = await Promise.all([
+        api("/products"), api("/categories"), api("/suppliers"), api("/stockmovements"), api("/products/low-stock")
       ]);
       setProducts(productData);
       setCategories(categoryData);
       setSuppliers(supplierData);
       setMovements(movementData);
+      setLowStock(lowStockData);
     } catch (exception) {
       setError(exception.message);
     } finally {
@@ -445,8 +559,9 @@ export default function App() {
         {error && <div className="error" role="alert">{error}</div>}
         {loading && <p className="loading" role="status">Cargando datos…</p>}
         <Toast message={message} />
-        {view === "home" && !loading && <Home products={products} categories={categories} suppliers={suppliers} />}
+        {view === "home" && !loading && <Home products={products} categories={categories} suppliers={suppliers} lowStock={lowStock} movements={movements} />}
         {view === "movements" && <Movements products={products} items={movements} busy={busy} onSave={saveMovement} />}
+        {view === "reports" && <Reports />}
         {catalog && <>
           {form && <CatalogForm view={view} form={form} setForm={setForm} categories={categories} suppliers={suppliers}
             onSave={save} onCancel={() => setForm(null)} busy={busy} />}
