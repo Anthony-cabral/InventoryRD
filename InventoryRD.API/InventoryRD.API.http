@@ -12,3 +12,24 @@ Accept: application/json
 
 GET {{InventoryRD_API_HostAddress}}/api/products?isActive=true
 Accept: application/json
+
+
+###
+
+GET {{InventoryRD_API_HostAddress}}/api/products/low-stock
+Accept: application/json
+
+###
+
+GET {{InventoryRD_API_HostAddress}}/api/stockmovements
+Accept: application/json
+
+###
+
+GET {{InventoryRD_API_HostAddress}}/api/reports/stock?lowStockOnly=true
+Accept: application/json
+
+###
+
+GET {{InventoryRD_API_HostAddress}}/api/reports/movements
+Accept: application/json
